@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  PUBLIC_REPO: wuji-technology/wuji-openpi-public
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version:     ${{ steps.meta.outputs.version }}
+      is_rc:       ${{ steps.meta.outputs.is_rc }}
+      notes_file:  ${{ steps.notes.outputs.notes_file }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Parse tag metadata
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          if [[ "$TAG" =~ -rc[0-9]+$ ]]; then
+            IS_RC=true
+          else
+            IS_RC=false
+          fi
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"   >> "$GITHUB_OUTPUT"
+          echo "is_rc=$IS_RC"       >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]"          { found=1; next }
+            found && /^## \[/                 { exit }
+            found                             { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "::warning::No section for [$VERSION] found in CHANGELOG.md"
+            printf "Release %s\n" "$VERSION" > "$NOTES_FILE"
+          fi
+
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Create private repo Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   ${{ steps.meta.outputs.tag }}
+          name:       ${{ steps.meta.outputs.tag }}
+          body_path:  ${{ steps.notes.outputs.notes_file }}
+          prerelease: ${{ steps.meta.outputs.is_rc }}
+          token:      ${{ secrets.GITHUB_TOKEN }}
+
+  publish-public:
+    name: Mirror Release to public repo
+    needs: release
+    if: needs.release.outputs.is_rc == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: wuji-technology
+          repositories: |
+            wuji-openpi
+            wuji-openpi-public
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Re-extract release notes
+        id: notes
+        run: |
+          VERSION="${{ needs.release.outputs.version }}"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]"          { found=1; next }
+            found && /^## \[/                 { exit }
+            found                             { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+          [ -s "$NOTES_FILE" ] || printf "Release %s\n" "$VERSION" > "$NOTES_FILE"
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Create Release on public repo
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG:      ${{ github.ref_name }}
+          NOTES:    ${{ steps.notes.outputs.notes_file }}
+          REPO:     ${{ env.PUBLIC_REPO }}
+        run: |
+          BODY="$(cat "$NOTES")"
+          jq -n \
+            --arg tag  "$TAG" \
+            --arg name "$TAG" \
+            --arg body "$BODY" \
+            '{tag_name:$tag, name:$name, body:$body, draft:false, prerelease:false}' \
+          | gh api -X POST "repos/$REPO/releases" --input -
+
+  notify-feishu:
+    name: Feishu release notification
+    needs: [release, publish-public]
+    if: needs.release.outputs.is_rc == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Feishu message
+        env:
+          WEBHOOK: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
+          TAG:     ${{ github.ref_name }}
+          REPO:    ${{ github.repository }}
+          PUBLIC:  ${{ env.PUBLIC_REPO }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::FEISHU_RELEASE_WEBHOOK not set, skipping"
+            exit 0
+          fi
+          TITLE="🚀 wuji-openpi $TAG 已发布"
+          LINK="https://github.com/$PUBLIC/releases/tag/$TAG"
+          jq -n --arg title "$TITLE" --arg link "$LINK" --arg repo "$REPO" '{
+            msg_type: "interactive",
+            card: {
+              header: { title: { tag: "plain_text", content: $title }, template: "green" },
+              elements: [
+                { tag: "div", text: { tag: "lark_md",
+                  content: ("**仓库:** " + $repo + "\n**链接:** [" + $link + "](" + $link + ")") } }
+              ]
+            }
+          }' | curl -sS -X POST -H "Content-Type: application/json" -d @- "$WEBHOOK"

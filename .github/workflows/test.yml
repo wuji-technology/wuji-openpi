@@ -1,0 +1,41 @@
+name: Test
+on:
+  pull_request:
+    branches:
+      - "*"
+
+jobs:
+  run_tests:
+    name: Run Tests
+    runs-on: ubuntu-latest  # temporary: self-hosted openpi-verylarge offline, see PR #1
+    env:
+      GIT_LFS_SKIP_SMUDGE: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install FFmpeg dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install the project
+        run: uv sync --all-extras --dev
+
+      - name: Run tests
+        # On ubuntu-latest (7GB RAM, no GPU) we skip tests that load full
+        # JAX/Pi0/Gemma models — they OOM-kill the runner. Drop these
+        # ignores once the self-hosted `openpi-verylarge` runner is back.
+        run: |
+          uv run pytest --strict-markers -m "not manual" \
+            --ignore=src/openpi/models/model_test.py \
+            --ignore=src/openpi/models/pi0_test.py \
+            --ignore=src/openpi/models/tokenizer_test.py \
+            --ignore=src/openpi/policies/policy_test.py \
+            --ignore=src/openpi/training/data_loader_test.py \
+            --ignore=scripts/train_test.py
