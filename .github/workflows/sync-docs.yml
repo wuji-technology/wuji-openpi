@@ -1,0 +1,92 @@
+name: Sync Docs to Public Repo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - CHANGELOG.md
+      - README.md
+
+env:
+  PUBLIC_OWNER: wuji-technology
+  PUBLIC_REPO: wuji-openpi-public
+
+jobs:
+  sync:
+    name: Open sync PR on public repo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip if latest CHANGELOG entry is RC
+        id: gate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Inspect latest CHANGELOG version
+        id: ver
+        run: |
+          LATEST=$(grep -m1 -E '^## \[[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?\]' CHANGELOG.md | \
+                   sed -E 's/^## \[([^]]+)\].*/\1/' || true)
+          echo "version=$LATEST" >> "$GITHUB_OUTPUT"
+          if [[ "$LATEST" =~ -rc[0-9]+$ ]]; then
+            echo "is_rc=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "is_rc=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop early on RC
+        if: steps.ver.outputs.is_rc == 'true'
+        run: |
+          echo "Latest CHANGELOG entry is RC (${{ steps.ver.outputs.version }}); skipping sync."
+
+      - name: Generate GitHub App token
+        if: steps.ver.outputs.is_rc != 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ env.PUBLIC_OWNER }}
+          repositories: ${{ env.PUBLIC_REPO }}
+
+      - name: Checkout public repo
+        if: steps.ver.outputs.is_rc != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PUBLIC_OWNER }}/${{ env.PUBLIC_REPO }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: public
+          fetch-depth: 0
+
+      - name: Copy docs and open PR
+        if: steps.ver.outputs.is_rc != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION:  ${{ steps.ver.outputs.version }}
+        working-directory: public
+        run: |
+          git config user.name  "wuji-release-bot"
+          git config user.email "release-bot@wuji-technology.local"
+
+          BRANCH="sync-docs/${VERSION:-$(date -u +%Y%m%d%H%M%S)}"
+          git checkout -B "$BRANCH"
+
+          cp "$GITHUB_WORKSPACE/CHANGELOG.md" CHANGELOG.md
+          cp "$GITHUB_WORKSPACE/README.md"    README.md
+
+          if git diff --quiet -- CHANGELOG.md README.md; then
+            echo "No doc changes after copy; nothing to sync."
+            exit 0
+          fi
+
+          git add CHANGELOG.md README.md
+          git commit -m "docs: sync CHANGELOG/README from wuji-openpi@${GITHUB_SHA::7}"
+          git push -u origin "$BRANCH" --force
+
+          gh pr create \
+            --repo "${{ env.PUBLIC_OWNER }}/${{ env.PUBLIC_REPO }}" \
+            --head "$BRANCH" \
+            --base main \
+            --title "docs: sync ${VERSION:-changelog} from upstream" \
+            --body  "Automated sync from wuji-openpi (commit ${GITHUB_SHA})." \
+          || echo "PR already exists for $BRANCH."

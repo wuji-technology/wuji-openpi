@@ -1,0 +1,151 @@
+# Wuji Robot Deployment Configuration
+# Unified configuration file, supporting the OpenPI control pipeline
+
+# ==============================================================================
+# Basic configuration
+# ==============================================================================
+id: "wuji_robot"
+
+# Arm mode: "single_right", "single_left", "dual"
+arm_mode: "dual"
+
+# Whether to use end-effector pose
+use_ee_pose: false
+
+# ==============================================================================
+# Arm type configuration
+# ==============================================================================
+# Arm type: "wuji", "agilex", "custom"
+#   - wuji: Wuji arm
+#       * Arm hardware output: degrees
+#       * Dexterous hand hardware output: radians
+#       * Note: training data uses mixed units (no conversion), and no conversion at inference either
+#   - agilex: AgileX arm, low-level control uses degrees
+#   - custom: custom; arm_hw_unit and hand_hw_unit must be configured manually
+arm_type: "wuji"
+
+# Hardware unit configuration (only effective when arm_type="custom")
+# "degree": hardware uses degrees
+# "radian": hardware uses radians
+arm_hw_unit: "degree"
+hand_hw_unit: "radian"
+
+# Robot degrees of freedom
+arm_dof: 7
+hand_dof: 20
+
+# Control frequency
+control_hz: 30.0
+
+# Timestamp synchronization tolerance (seconds)
+max_time_diff: 0.01
+
+# ==============================================================================
+# OpenPI-specific configuration
+# ==============================================================================
+# Policy server address
+server_host: localhost
+server_port: 8000
+
+# Action chunk length (ActionChunkBroker)
+action_horizon: 50
+
+# Episode configuration
+num_episodes: 1
+max_episode_steps: 1000000
+
+# Task instruction
+prompt: "manipulation"
+
+# ==============================================================================
+# ROS2 topic configuration - joint state subscription
+# ==============================================================================
+joint_state_topics:
+  left_arm:
+    topic: "/tianji_arm/left/joint_state"
+    enabled: true
+  right_arm:
+    topic: "/tianji_arm/right/joint_state"
+    enabled: true
+  left_hand:
+    topic: "/wuji_hand/left/joint_state"
+    enabled: true
+  right_hand:
+    topic: "/wuji_hand/right/joint_state"
+    enabled: true
+
+# ==============================================================================
+# ROS2 topic configuration - camera subscription
+# ==============================================================================
+camera_topics:
+  cam_high:
+    topic: "/stereo/right/compressed"
+    enabled: true
+  cam_left_wrist:
+    topic: "/cam_left_wrist/color/image_rect_raw/compressed"
+    enabled: true
+  cam_right_wrist:
+    topic: "/cam_right_wrist/color/image_rect_raw/compressed"
+    enabled: true
+
+# ==============================================================================
+# ROS2 topic configuration - action command publishing
+# ==============================================================================
+action_cmd_topics:
+  left_arm:
+    topic: "/tianji_arm/left/joint_command"
+    enabled: true
+  right_arm:
+    topic: "/tianji_arm/right/joint_command"
+    enabled: true
+  left_hand:
+    topic: "/wuji_hand/left/joint_command"
+    enabled: true
+  right_hand:
+    topic: "/wuji_hand/right/joint_command"
+    enabled: true
+
+# ==============================================================================
+# End-effector pose topics (optional)
+# ==============================================================================
+# left_ee_pose_topic: "/left_ee_pose"
+# right_ee_pose_topic: "/right_ee_pose"
+
+# ==============================================================================
+# Timeout configuration
+# ==============================================================================
+data_timeout_s: 30.0
+observation_timeout_s: 1.0
+connect_timeout_s: 10.0
+
+# Timestamp synchronization
+sync_slop: 0.1
+sync_queue_size: 10
+
+# QoS
+qos_reliability: "best_effort"
+qos_history_depth: 1
+
+# ==============================================================================
+# Initial position configuration (optional)
+# ==============================================================================
+# initial_arm_positions:
+#   right_arm: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+#   left_arm: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# Action broker mode: serial / rtg / rtg_qp
+broker_mode: "rtg"
+
+# RTG configuration (only effective when broker_mode=rtg)
+rtg_enabled: true
+rtg_trigger_fraction: 0.5    # trigger next inference when 50% of chunk is consumed
+rtg_guidance_steps: 3        # apply cubic interpolation smoothing on the new chunk prefix
+
+# QP-RTG configuration (only effective when broker_mode=rtg_qp)
+rtg_qp_enabled: false
+rtg_qp_smoothness_weight: 1.0
+rtg_qp_anchor_weight: 10.0
+rtg_qp_old_weight: 1.0
+rtg_qp_new_weight: 1.0
+rtg_qp_velocity_scale: 1.25
+rtg_qp_min_step: 0.001
