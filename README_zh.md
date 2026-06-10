@@ -135,7 +135,7 @@ TrainConfig(
         ],
         ...
     ),
-    weight_loader=CheckpointWeightLoader(
+    weight_loader=PartialCheckpointWeightLoader(
         "/path/to/pi05_base/params"
     ),
 )
