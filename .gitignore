@@ -4,6 +4,10 @@ checkpoints/
 data/
 wandb/
 
+# ...but keep documentation media (README demo video, diagrams, etc.).
+!docs/assets/
+!docs/assets/**
+
 # Open loop results
 open_loop_results*/
 
